@@ -9,6 +9,7 @@ type GameFinishOverlayProps = {
   countdown: number;
   myReady: boolean;
   opponentReady: boolean;
+  rematchAvailable: boolean;
   busy: boolean;
   onRematch: () => void;
   onExit: () => void;
@@ -20,6 +21,7 @@ export function GameFinishOverlay({
   countdown,
   myReady,
   opponentReady,
+  rematchAvailable,
   busy,
   onRematch,
   onExit,
@@ -89,6 +91,14 @@ export function GameFinishOverlay({
     return null;
   }
 
+  const titleClass =
+    title === "Victory"
+      ? "text-emerald-600"
+      : title === "Defeat"
+        ? "text-rose-600"
+        : "text-stone-900";
+  const readyCount = Number(myReady) + Number(opponentReady);
+
   return (
     <div
       ref={rootRef}
@@ -97,7 +107,7 @@ export function GameFinishOverlay({
       <div className="w-full max-w-md rounded-2xl border border-white/20 bg-white/95 p-5 text-center shadow-2xl">
         <h3
           ref={titleRef}
-          className="text-2xl font-extrabold tracking-tight text-stone-900"
+          className={`text-2xl font-extrabold tracking-tight ${titleClass}`}
         >
           {title}
         </h3>
@@ -112,19 +122,29 @@ export function GameFinishOverlay({
           <Badge variant={opponentReady ? "success" : "secondary"}>
             对手: {opponentReady ? "已确认" : "未确认"}
           </Badge>
+          <Badge variant={readyCount === 2 ? "success" : "default"}>
+            准备进度: {readyCount}/2
+          </Badge>
         </div>
 
         <p className="mt-3 text-sm text-stone-700">
-          {countdown > 0
-            ? `剩余 ${countdown} 秒，超时将断开实时连接`
-            : "已超时，正在关闭连接"}
+          {!rematchAvailable
+            ? "再来一局功能未初始化，请先执行最新 schema.sql。"
+            : countdown > 0
+              ? readyCount < 2
+                ? `已就绪 ${readyCount}/2，等待对方加入（剩余 ${countdown} 秒）`
+                : "双方就绪，正在开始下一局..."
+              : "已超时，正在关闭连接"}
         </p>
 
         <div
           ref={actionRef}
           className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center"
         >
-          <Button disabled={busy || myReady} onClick={onRematch}>
+          <Button
+            disabled={busy || myReady || !rematchAvailable}
+            onClick={onRematch}
+          >
             再来一局
           </Button>
           <Button variant="destructive" disabled={busy} onClick={onExit}>

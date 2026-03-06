@@ -24,6 +24,7 @@ function App() {
     rematchCountdown,
     myRematchReady,
     opponentRematchReady,
+    rematchAvailable,
     syncMode,
     copyUserId,
     reconnectRealtime,
@@ -118,6 +119,7 @@ function App() {
           rematchCountdown={rematchCountdown}
           myRematchReady={myRematchReady}
           opponentRematchReady={opponentRematchReady}
+          rematchAvailable={rematchAvailable}
           onRematchChoice={chooseRematch}
           onPlaceStone={placeStone}
         />

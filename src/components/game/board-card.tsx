@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { BOARD_SIZE, type Game } from "../../types/game";
 import { shortId } from "../../lib/gomoku";
 import { Badge } from "../ui/badge";
@@ -20,11 +21,12 @@ type BoardCardProps = {
   rematchCountdown: number;
   myRematchReady: boolean;
   opponentRematchReady: boolean;
+  rematchAvailable: boolean;
   onRematchChoice: (accept: boolean) => Promise<void>;
   onPlaceStone: (x: number, y: number) => Promise<void>;
 };
 
-export function BoardCard({
+export const BoardCard = memo(function BoardCard({
   board,
   activeGame,
   userId,
@@ -34,6 +36,7 @@ export function BoardCard({
   rematchCountdown,
   myRematchReady,
   opponentRematchReady,
+  rematchAvailable,
   onRematchChoice,
   onPlaceStone,
 }: BoardCardProps) {
@@ -121,6 +124,7 @@ export function BoardCard({
             countdown={rematchCountdown}
             myReady={myRematchReady}
             opponentReady={opponentRematchReady}
+            rematchAvailable={rematchAvailable}
             busy={busy}
             onRematch={() => onRematchChoice(true)}
             onExit={() => onRematchChoice(false)}
@@ -129,4 +133,4 @@ export function BoardCard({
       </CardContent>
     </Card>
   );
-}
+});
