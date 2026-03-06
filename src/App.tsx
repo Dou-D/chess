@@ -12,6 +12,8 @@ function App() {
     isSupabaseConfigured,
     board,
     userId,
+    myPublicId,
+    publicIdDraft,
     incomingInvites,
     outgoingInvites,
     activeGame,
@@ -21,13 +23,17 @@ function App() {
     errorMessage,
     myColor,
     opponentId,
+    finishedResultTitle,
     targetInviteId,
     turnCountdown,
     isMyTurn,
     syncMode,
     copyUserId,
     reconnectRealtime,
+    setPublicIdDraft,
+    savePublicId,
     setTargetInviteId,
+    formatUserDisplay,
     sendInvite,
     respondInvite,
     placeStone,
@@ -91,9 +97,13 @@ function App() {
 
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <IdentityCard
-            userId={userId}
+            myPublicId={myPublicId}
+            publicIdDraft={publicIdDraft}
             loading={loading}
+            busy={busy}
             notice={notice}
+            onPublicIdChange={setPublicIdDraft}
+            onSavePublicId={savePublicId}
             onCopy={copyUserId}
           />
           <div className="lg:col-span-2">
@@ -103,6 +113,7 @@ function App() {
               targetId={targetInviteId}
               outgoingInvites={outgoingInvites}
               incomingInvites={incomingInvites}
+              formatUserDisplay={formatUserDisplay}
               onTargetIdChange={setTargetInviteId}
               onSendInvite={sendInvite}
               onRespondInvite={respondInvite}
@@ -116,6 +127,7 @@ function App() {
           userId={userId}
           myColor={myColor}
           opponentId={opponentId}
+          finishedResultTitle={finishedResultTitle}
           busy={busy}
           isMyTurn={isMyTurn}
           turnCountdown={turnCountdown}

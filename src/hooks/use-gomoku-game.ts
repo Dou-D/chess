@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { createBoard, hasFive } from "../lib/gomoku";
+import { createBoard, hasFive, shortId } from "../lib/gomoku";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { BOARD_SIZE, type Game, type Invite, type Move } from "../types/game";
 
@@ -17,6 +17,7 @@ type PlaceStoneOptions = {
 };
 
 const TURN_SECONDS = 15;
+const PUBLIC_ID_RULE = /^[a-zA-Z0-9_-]{4,24}$/;
 
 const DEFAULT_REALTIME_STATE: RealtimeState = {
   incomingInvites: false,
@@ -33,6 +34,8 @@ export function useGomokuGame() {
   const queryClient = useQueryClient();
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [myPublicId, setMyPublicId] = useState<string>("");
+  const [publicIdDraft, setPublicIdDraft] = useState<string>("");
   const [authLoading, setAuthLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -42,12 +45,17 @@ export function useGomokuGame() {
     DEFAULT_REALTIME_STATE,
   );
   const [targetInviteId, setTargetInviteId] = useState("");
+  const [currentGameId, setCurrentGameId] = useState<string | null>(null);
+  const [finishedResultTitle, setFinishedResultTitle] = useState<string | null>(
+    null,
+  );
   const [turnCountdown, setTurnCountdown] = useState(0);
 
   const turnAnchorRef = useRef<string | null>(null);
   const turnDeadlineRef = useRef<number | null>(null);
   const autoMoveLockRef = useRef<string | null>(null);
   const prevActiveGameRef = useRef<Game | null>(null);
+  const sessionStartRef = useRef<number>(Date.now());
 
   const invitesRealtimeHealthy =
     realtimeEnabled &&
@@ -134,12 +142,69 @@ export function useGomokuGame() {
 
       const uid = userData.user.id;
       setUserId(uid);
-      await supabase.from("profiles").upsert({ id: uid });
+
+      const { data: profileRow, error: profileError } = await supabase
+        .from("profiles")
+        .upsert({ id: uid })
+        .select("public_id")
+        .single();
+
+      if (profileError) {
+        if (profileError.message.includes("public_id")) {
+          setErrorMessage(
+            "缺少 profiles.public_id 字段，请执行最新 supabase/schema.sql 后刷新页面。",
+          );
+        } else {
+          setErrorMessage(`初始化用户信息失败: ${profileError.message}`);
+        }
+      } else if (profileRow?.public_id) {
+        setMyPublicId(profileRow.public_id);
+        setPublicIdDraft(profileRow.public_id);
+      }
+
       setAuthLoading(false);
     };
 
     void init();
   }, []);
+
+  const savePublicId = useCallback(async () => {
+    if (!supabase || !userId) {
+      return;
+    }
+
+    const next = publicIdDraft.trim();
+    if (!PUBLIC_ID_RULE.test(next)) {
+      setErrorMessage("ID 需为 4-24 位，仅允许字母、数字、下划线、短横线。");
+      return;
+    }
+
+    setBusy(true);
+    setErrorMessage(null);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ public_id: next })
+      .eq("id", userId);
+
+    setBusy(false);
+    if (error) {
+      if (error.message.includes("public_id")) {
+        setErrorMessage(
+          "缺少 profiles.public_id 字段，请执行最新 supabase/schema.sql。",
+        );
+      } else if (error.message.toLowerCase().includes("duplicate")) {
+        setErrorMessage("该 ID 已被占用，请更换后重试。");
+      } else {
+        setErrorMessage(`保存 ID 失败: ${error.message}`);
+      }
+      return;
+    }
+
+    setMyPublicId(next);
+    setNotice("已保存你的对战 ID");
+    setTimeout(() => setNotice(null), 1200);
+  }, [publicIdDraft, userId]);
 
   const incomingInvitesQuery = useQuery({
     queryKey: ["incomingInvites", userId],
@@ -178,7 +243,7 @@ export function useGomokuGame() {
         .from("invites")
         .select("*")
         .eq("from_user", userId!)
-        .eq("status", "pending")
+        .in("status", ["pending", "accepted"])
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -190,8 +255,8 @@ export function useGomokuGame() {
   });
 
   const activeGameQuery = useQuery({
-    queryKey: ["activeGame", userId],
-    enabled: Boolean(userId && supabase),
+    queryKey: ["activeGame", userId, currentGameId],
+    enabled: Boolean(userId && supabase && currentGameId),
     refetchInterval: realtimeEnabled
       ? gameRealtimeHealthy
         ? false
@@ -201,9 +266,8 @@ export function useGomokuGame() {
       const { data, error } = await supabase!
         .from("games")
         .select("*")
+        .eq("id", currentGameId!)
         .or(`black_player.eq.${userId!},white_player.eq.${userId!}`)
-        .in("status", ["waiting", "playing"])
-        .order("created_at", { ascending: false })
         .limit(1);
 
       if (error) {
@@ -253,6 +317,66 @@ export function useGomokuGame() {
   const outgoingInvites = outgoingInvitesQuery.data ?? [];
   const moves = movesQuery.data ?? [];
 
+  const relatedIds = useMemo(() => {
+    const set = new Set<string>();
+    if (userId) {
+      set.add(userId);
+    }
+    for (const invite of incomingInvites) {
+      set.add(invite.from_user);
+      set.add(invite.to_user);
+    }
+    for (const invite of outgoingInvites) {
+      set.add(invite.from_user);
+      set.add(invite.to_user);
+    }
+    if (activeGame) {
+      set.add(activeGame.black_player);
+      set.add(activeGame.white_player);
+    }
+    return [...set];
+  }, [activeGame, incomingInvites, outgoingInvites, userId]);
+
+  const profileMapQuery = useQuery({
+    queryKey: ["profileMap", relatedIds.join("|")],
+    enabled: Boolean(supabase && relatedIds.length > 0),
+    queryFn: async () => {
+      const { data, error } = await supabase!
+        .from("profiles")
+        .select("id, public_id")
+        .in("id", relatedIds);
+
+      if (error) {
+        if (error.message.includes("public_id")) {
+          return [] as Array<{ id: string; public_id: string | null }>;
+        }
+        throw new Error(error.message);
+      }
+
+      return (data as Array<{ id: string; public_id: string | null }>) ?? [];
+    },
+  });
+
+  const publicIdMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of profileMapQuery.data ?? []) {
+      if (row.public_id) {
+        map.set(row.id, row.public_id);
+      }
+    }
+    return map;
+  }, [profileMapQuery.data]);
+
+  const formatUserDisplay = useCallback(
+    (id: string | null) => {
+      if (!id) {
+        return "-";
+      }
+      return publicIdMap.get(id) ?? shortId(id);
+    },
+    [publicIdMap],
+  );
+
   const loading =
     authLoading ||
     incomingInvitesQuery.isLoading ||
@@ -264,7 +388,8 @@ export function useGomokuGame() {
       incomingInvitesQuery.error ??
       outgoingInvitesQuery.error ??
       activeGameQuery.error ??
-      movesQuery.error;
+      movesQuery.error ??
+      profileMapQuery.error;
 
     if (!firstError) {
       return;
@@ -276,6 +401,7 @@ export function useGomokuGame() {
     outgoingInvitesQuery.error,
     activeGameQuery.error,
     movesQuery.error,
+    profileMapQuery.error,
   ]);
 
   const board = useMemo(() => createBoard(moves), [moves]);
@@ -304,6 +430,11 @@ export function useGomokuGame() {
     return getOpponent(activeGame, userId);
   }, [activeGame, userId]);
 
+  const opponentDisplayId = useMemo(
+    () => formatUserDisplay(opponentId),
+    [formatUserDisplay, opponentId],
+  );
+
   const isMyTurn = Boolean(
     activeGame &&
     activeGame.status === "playing" &&
@@ -312,21 +443,54 @@ export function useGomokuGame() {
   );
 
   useEffect(() => {
+    if (currentGameId || !userId) {
+      return;
+    }
+
+    const acceptedInvite = outgoingInvites.find(
+      (item) =>
+        item.status === "accepted" &&
+        item.game_id &&
+        new Date(item.created_at).getTime() >= sessionStartRef.current,
+    );
+    if (!acceptedInvite?.game_id) {
+      return;
+    }
+
+    setCurrentGameId(acceptedInvite.game_id);
+    setFinishedResultTitle(null);
+    setNotice("邀请已被接受，对局已开始");
+    setTimeout(() => setNotice(null), 1200);
+  }, [currentGameId, outgoingInvites, userId]);
+
+  useEffect(() => {
+    if (!activeGame || activeGame.status !== "finished" || !userId) {
+      return;
+    }
+
+    const title = activeGame.winner
+      ? activeGame.winner === userId
+        ? "Victory"
+        : "Defeat"
+      : "Draw";
+
+    setFinishedResultTitle(title);
+    setTargetInviteId(opponentDisplayId === "-" ? "" : opponentDisplayId);
+    setCurrentGameId(null);
+    setNotice("本局已结束，已释放本局实时连接。若要继续请重新邀请。");
+    setTimeout(() => setNotice(null), 1800);
+  }, [activeGame, opponentDisplayId, userId]);
+
+  useEffect(() => {
     const previous = prevActiveGameRef.current;
-    if (
-      previous &&
-      userId &&
-      (!activeGame || activeGame.id !== previous.id) &&
-      (previous.status === "playing" || previous.status === "finished")
-    ) {
+    if (previous && userId && (!activeGame || activeGame.id !== previous.id)) {
       const lastOpponent = getOpponent(previous, userId);
-      setTargetInviteId(lastOpponent);
-      setNotice("对局已结束，可直接再次邀请同一位对手。");
-      setTimeout(() => setNotice(null), 1800);
+      const nextTarget = formatUserDisplay(lastOpponent);
+      setTargetInviteId(nextTarget === "-" ? "" : nextTarget);
     }
 
     prevActiveGameRef.current = activeGame;
-  }, [activeGame, userId]);
+  }, [activeGame, formatUserDisplay, userId]);
 
   useEffect(() => {
     if (!supabase || !userId || !realtimeEnabled) {
@@ -465,7 +629,8 @@ export function useGomokuGame() {
   }, [userId, activeGame?.id, queryClient, realtimeEnabled]);
 
   const copyUserId = useCallback(async () => {
-    if (!userId) {
+    if (!myPublicId) {
+      setErrorMessage("请先设置并保存你的对战 ID");
       return;
     }
 
@@ -484,21 +649,21 @@ export function useGomokuGame() {
 
     try {
       if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(userId);
+        await navigator.clipboard.writeText(myPublicId);
       } else {
-        const copied = fallbackCopy(userId);
+        const copied = fallbackCopy(myPublicId);
         if (!copied) {
           throw new Error("fallback copy failed");
         }
       }
 
-      setNotice("已复制你的用户 ID");
+      setNotice("已复制你的对战 ID");
       setErrorMessage(null);
       setTimeout(() => setNotice(null), 1200);
     } catch {
-      const copied = fallbackCopy(userId);
+      const copied = fallbackCopy(myPublicId);
       if (copied) {
-        setNotice("已复制你的用户 ID");
+        setNotice("已复制你的对战 ID");
         setErrorMessage(null);
         setTimeout(() => setNotice(null), 1200);
         return;
@@ -508,20 +673,25 @@ export function useGomokuGame() {
         "复制失败：请检查浏览器剪贴板权限，或手动选择上方 ID 进行复制。",
       );
     }
-  }, [userId]);
+  }, [myPublicId]);
 
   const sendInvite = useCallback(async () => {
     if (!supabase || !userId) {
       return;
     }
 
-    const toUser = targetInviteId.trim();
-    if (!toUser) {
+    if (!myPublicId) {
+      setErrorMessage("请先在左侧设置并保存你的对战 ID");
+      return;
+    }
+
+    const toPublicId = targetInviteId.trim();
+    if (!toPublicId) {
       setErrorMessage("请输入对方 ID");
       return;
     }
 
-    if (toUser === userId) {
+    if (toPublicId === myPublicId) {
       setErrorMessage("不能邀请自己");
       return;
     }
@@ -529,9 +699,33 @@ export function useGomokuGame() {
     setBusy(true);
     setErrorMessage(null);
 
+    const { data: targetProfile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("public_id", toPublicId)
+      .maybeSingle();
+
+    if (profileError) {
+      setBusy(false);
+      if (profileError.message.includes("public_id")) {
+        setErrorMessage(
+          "缺少 profiles.public_id 字段，请执行最新 supabase/schema.sql。",
+        );
+      } else {
+        setErrorMessage(`查询对方 ID 失败: ${profileError.message}`);
+      }
+      return;
+    }
+
+    if (!targetProfile?.id) {
+      setBusy(false);
+      setErrorMessage("未找到该对战 ID，请确认对方已设置并保存。");
+      return;
+    }
+
     const { error } = await supabase.from("invites").insert({
       from_user: userId,
-      to_user: toUser,
+      to_user: targetProfile.id,
       status: "pending",
     });
 
@@ -546,7 +740,7 @@ export function useGomokuGame() {
     void queryClient.invalidateQueries({
       queryKey: ["outgoingInvites", userId],
     });
-  }, [queryClient, targetInviteId, userId]);
+  }, [myPublicId, queryClient, targetInviteId, userId]);
 
   const respondInvite = useCallback(
     async (invite: Invite, accepted: boolean) => {
@@ -603,7 +797,10 @@ export function useGomokuGame() {
         return;
       }
 
-      setTargetInviteId(invite.from_user);
+      const nextTarget = formatUserDisplay(invite.from_user);
+      setTargetInviteId(nextTarget === "-" ? "" : nextTarget);
+      setCurrentGameId(gameData.id);
+      setFinishedResultTitle(null);
       void queryClient.invalidateQueries({
         queryKey: ["incomingInvites", userId],
       });
@@ -613,7 +810,7 @@ export function useGomokuGame() {
       void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
       void queryClient.invalidateQueries({ queryKey: ["moves", gameData.id] });
     },
-    [queryClient, userId],
+    [formatUserDisplay, queryClient, userId],
   );
 
   const placeStone = useCallback(
@@ -696,7 +893,12 @@ export function useGomokuGame() {
       queryClient.setQueryData<Move[]>(["moves", activeGame.id], nextMoves);
 
       if (updatePayload.status === "finished") {
-        setTargetInviteId(getOpponent(activeGame, userId));
+        const nextTarget = formatUserDisplay(getOpponent(activeGame, userId));
+        setTargetInviteId(nextTarget === "-" ? "" : nextTarget);
+        setFinishedResultTitle(winner ? "Victory" : draw ? "Draw" : null);
+        setCurrentGameId(null);
+        setNotice("本局已结束，已释放本局实时连接。若要继续请重新邀请。");
+        setTimeout(() => setNotice(null), 1800);
       }
 
       void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
@@ -704,7 +906,7 @@ export function useGomokuGame() {
         queryKey: ["moves", activeGame.id],
       });
     },
-    [activeGame, board, moves, queryClient, userId],
+    [activeGame, board, formatUserDisplay, moves, queryClient, userId],
   );
 
   useEffect(() => {
@@ -778,6 +980,8 @@ export function useGomokuGame() {
     isSupabaseConfigured,
     board,
     userId,
+    myPublicId,
+    publicIdDraft,
     incomingInvites,
     outgoingInvites,
     activeGame,
@@ -786,7 +990,8 @@ export function useGomokuGame() {
     notice,
     errorMessage,
     myColor,
-    opponentId,
+    opponentId: opponentDisplayId,
+    finishedResultTitle,
     targetInviteId,
     turnCountdown,
     isMyTurn,
@@ -794,7 +999,10 @@ export function useGomokuGame() {
     copyUserId,
     disconnectRealtime,
     reconnectRealtime,
+    setPublicIdDraft,
+    savePublicId,
     setTargetInviteId,
+    formatUserDisplay,
     sendInvite,
     respondInvite,
     placeStone,

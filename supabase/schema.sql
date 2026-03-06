@@ -3,8 +3,31 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
+  public_id text unique,
+  constraint profiles_public_id_format check (
+    public_id is null or public_id ~ '^[A-Za-z0-9_-]{4,24}$'
+  ),
   created_at timestamptz not null default now()
 );
+
+alter table public.profiles add column if not exists public_id text;
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'profiles_public_id_format'
+  ) then
+    alter table public.profiles
+      add constraint profiles_public_id_format check (
+        public_id is null or public_id ~ '^[A-Za-z0-9_-]{4,24}$'
+      );
+  end if;
+end
+$$;
+create unique index if not exists idx_profiles_public_id_unique
+  on public.profiles(public_id)
+  where public_id is not null;
 
 create table if not exists public.games (
   id uuid primary key default gen_random_uuid(),

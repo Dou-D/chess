@@ -1,5 +1,4 @@
 import type { Invite } from "../../types/game";
-import { shortId } from "../../lib/gomoku";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -17,6 +16,7 @@ type InviteCardProps = {
   targetId: string;
   outgoingInvites: Invite[];
   incomingInvites: Invite[];
+  formatUserDisplay: (id: string | null) => string;
   onTargetIdChange: (value: string) => void;
   onSendInvite: () => Promise<void>;
   onRespondInvite: (invite: Invite, accepted: boolean) => Promise<void>;
@@ -28,6 +28,7 @@ export function InviteCard({
   targetId,
   outgoingInvites,
   incomingInvites,
+  formatUserDisplay,
   onTargetIdChange,
   onSendInvite,
   onRespondInvite,
@@ -35,6 +36,10 @@ export function InviteCard({
   const handleSend = async () => {
     await onSendInvite();
   };
+
+  const pendingOutgoing = outgoingInvites.filter(
+    (invite) => invite.status === "pending",
+  );
 
   return (
     <Card>
@@ -56,13 +61,13 @@ export function InviteCard({
 
         <div className="space-y-2">
           <p className="text-sm font-medium text-stone-700">我发出的邀请</p>
-          {outgoingInvites.length === 0 ? (
+          {pendingOutgoing.length === 0 ? (
             <p className="text-sm text-stone-500">暂无待处理邀请</p>
           ) : (
             <div className="space-y-2">
-              {outgoingInvites.map((invite) => (
+              {pendingOutgoing.map((invite) => (
                 <Badge key={invite.id} variant="secondary" className="mr-2">
-                  发给 {shortId(invite.to_user)} (等待中)
+                  发给 {formatUserDisplay(invite.to_user)} (等待中)
                 </Badge>
               ))}
             </div>
@@ -81,7 +86,7 @@ export function InviteCard({
                   className="flex flex-col gap-2 rounded-lg border border-stone-200 p-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <p className="text-sm text-stone-700">
-                    {shortId(invite.from_user)} 邀请你对战
+                    {formatUserDisplay(invite.from_user)} 邀请你对战
                   </p>
                   <div className="flex gap-2">
                     <Button
