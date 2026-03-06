@@ -40,11 +40,38 @@ create table if not exists public.moves (
   unique (game_id, move_index)
 );
 
+create table if not exists public.rematch_votes (
+  game_id uuid primary key references public.games(id) on delete cascade,
+  black_ready boolean not null default false,
+  white_ready boolean not null default false,
+  status text not null default 'pending' check (status in ('pending', 'starting', 'accepted', 'declined', 'timeout')),
+  next_game_id uuid references public.games(id) on delete set null,
+  expires_at timestamptz not null default (now() + interval '60 seconds'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists idx_invites_to_user_status on public.invites(to_user, status);
 create index if not exists idx_invites_from_user_status on public.invites(from_user, status);
 create index if not exists idx_games_black_player on public.games(black_player);
 create index if not exists idx_games_white_player on public.games(white_player);
 create index if not exists idx_moves_game_id on public.moves(game_id);
+create index if not exists idx_rematch_status on public.rematch_votes(status);
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists set_rematch_updated_at on public.rematch_votes;
+create trigger set_rematch_updated_at
+before update on public.rematch_votes
+for each row execute function public.set_updated_at();
 
 -- Keep profiles in sync for new auth users.
 create or replace function public.handle_new_user()
@@ -69,6 +96,7 @@ alter table public.profiles enable row level security;
 alter table public.invites enable row level security;
 alter table public.games enable row level security;
 alter table public.moves enable row level security;
+alter table public.rematch_votes enable row level security;
 
 -- profiles policies
 drop policy if exists "profiles_select_self" on public.profiles;
@@ -151,6 +179,52 @@ with check (
     where g.id = moves.game_id
       and g.status = 'playing'
       and g.current_turn = auth.uid()
+      and (g.black_player = auth.uid() or g.white_player = auth.uid())
+  )
+);
+
+-- rematch policies
+drop policy if exists "rematch_select_participants" on public.rematch_votes;
+create policy "rematch_select_participants"
+on public.rematch_votes for select
+using (
+  exists (
+    select 1
+    from public.games g
+    where g.id = rematch_votes.game_id
+      and (g.black_player = auth.uid() or g.white_player = auth.uid())
+  )
+);
+
+drop policy if exists "rematch_insert_participants" on public.rematch_votes;
+create policy "rematch_insert_participants"
+on public.rematch_votes for insert
+with check (
+  exists (
+    select 1
+    from public.games g
+    where g.id = rematch_votes.game_id
+      and (g.black_player = auth.uid() or g.white_player = auth.uid())
+      and g.status = 'finished'
+  )
+);
+
+drop policy if exists "rematch_update_participants" on public.rematch_votes;
+create policy "rematch_update_participants"
+on public.rematch_votes for update
+using (
+  exists (
+    select 1
+    from public.games g
+    where g.id = rematch_votes.game_id
+      and (g.black_player = auth.uid() or g.white_player = auth.uid())
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.games g
+    where g.id = rematch_votes.game_id
       and (g.black_player = auth.uid() or g.white_player = auth.uid())
   )
 );

@@ -18,7 +18,9 @@
 
 - 前端：Vite + React + TypeScript。
 - 状态与网络：`@supabase/supabase-js`。
-- 样式：原生 CSS（响应式，移动端可用）。
+- 数据状态与轮询：`@tanstack/react-query`。
+- 动画：`gsap`（用于结束动效）。
+- 样式：TailwindCSS + shadcn 风格基础组件（响应式）。
 - 构建工具：pnpm。
 
 ## 核心功能清单
@@ -42,6 +44,13 @@
 - 每次落子写入 Supabase（`moves` 表），双方实时同步。
 - 自动判定胜负（五子连线：横/竖/斜）。
 - 对局结束后显示结果并禁止继续落子。
+
+4. 结束后再来一局协议
+
+- 对局结束触发视觉动画（GSAP）。
+- 双方都点击“再来一局”才创建下一局。
+- 任意一方拒绝则断开实时连接。
+- 60 秒内未完成双方确认，超时并断开实时连接。
 
 4. 稳定性与体验
 
@@ -75,6 +84,15 @@
   - `y (int)`
   - `move_index (int)`
   - `created_at`
+- `rematch_votes`：
+  - `game_id (uuid, pk, fk -> games.id)`
+  - `black_ready (bool)`
+  - `white_ready (bool)`
+  - `status (pending/starting/accepted/declined/timeout)`
+  - `next_game_id (uuid, nullable)`
+  - `expires_at`
+  - `created_at`
+  - `updated_at`
 
 ## 安全要求（必须实现）
 
@@ -85,6 +103,7 @@
   - 仅游戏参与者可写入。
   - 仅在 `games.status='playing'` 且 `current_turn=auth.uid()` 时允许。
   - 坐标需在合法范围（可在 DB 约束或前端+触发器双重限制）。
+- 再来一局表读写：仅本局双方可读写。
 
 ## 实施步骤（执行顺序）
 
@@ -104,6 +123,7 @@
 - `auth`：匿名登录并缓存会话。
 - `invite`：发送、订阅、同意/拒绝邀请。
 - `game`：加载棋局、落子、胜负判断、实时同步。
+- `rematch`：结束后确认、超时、创建下一局、断开连接。
 
 4. UI 页面
 
@@ -111,6 +131,7 @@
 - 左侧：发起邀请区域（输入对方 ID + 发送）。
 - 右侧：收到的邀请列表（同意/拒绝）。
 - 下方：棋盘与对局状态（谁执子、轮到谁、胜者）。
+- 对局结束后显示动画面板与再来一局选择。
 
 5. 部署链路
 
@@ -126,6 +147,8 @@
 - 对方同意后立即进入同一局并实时落子。
 - 非自己回合无法落子。
 - 一方五连后正确结束对局。
+- 结束后双方都同意时才开始下一局。
+- 拒绝或超时时实时连接关闭。
 - 推送到 `main` 分支后自动部署成功，Cloudflare Pages URL 可访问。
 
 ## 输出要求

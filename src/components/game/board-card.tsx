@@ -1,6 +1,7 @@
 import { BOARD_SIZE, type Game } from "../../types/game";
 import { shortId } from "../../lib/gomoku";
 import { Badge } from "../ui/badge";
+import { GameFinishOverlay } from "./game-finish-overlay";
 import {
   Card,
   CardContent,
@@ -15,6 +16,11 @@ type BoardCardProps = {
   userId: string | null;
   myColor: string | null;
   opponentId: string | null;
+  busy: boolean;
+  rematchCountdown: number;
+  myRematchReady: boolean;
+  opponentRematchReady: boolean;
+  onRematchChoice: (accept: boolean) => Promise<void>;
   onPlaceStone: (x: number, y: number) => Promise<void>;
 };
 
@@ -24,6 +30,11 @@ export function BoardCard({
   userId,
   myColor,
   opponentId,
+  busy,
+  rematchCountdown,
+  myRematchReady,
+  opponentRematchReady,
+  onRematchChoice,
   onPlaceStone,
 }: BoardCardProps) {
   const statusText = !activeGame
@@ -37,6 +48,15 @@ export function BoardCard({
       : activeGame.current_turn === userId
         ? "轮到你落子"
         : "等待对方落子";
+
+  const gameFinishTitle =
+    activeGame?.status !== "finished"
+      ? ""
+      : activeGame.winner
+        ? activeGame.winner === userId
+          ? "Victory"
+          : "Defeat"
+        : "Draw";
 
   return (
     <Card>
@@ -57,7 +77,7 @@ export function BoardCard({
           {statusText}
         </Badge>
 
-        <div className="overflow-x-auto rounded-lg border border-stone-300 bg-stone-200 p-2">
+        <div className="relative overflow-x-auto rounded-lg border border-stone-300 bg-stone-200 p-2">
           <div
             className="mx-auto grid min-w-[320px] max-w-[680px] gap-[2px] rounded-md border border-amber-900 bg-amber-900 p-1"
             style={{
@@ -94,6 +114,17 @@ export function BoardCard({
               }),
             )}
           </div>
+
+          <GameFinishOverlay
+            visible={activeGame?.status === "finished"}
+            title={gameFinishTitle}
+            countdown={rematchCountdown}
+            myReady={myRematchReady}
+            opponentReady={opponentRematchReady}
+            busy={busy}
+            onRematch={() => onRematchChoice(true)}
+            onExit={() => onRematchChoice(false)}
+          />
         </div>
       </CardContent>
     </Card>
