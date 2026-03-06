@@ -56,6 +56,7 @@ export function useGomokuGame() {
   const autoMoveLockRef = useRef<string | null>(null);
   const prevActiveGameRef = useRef<Game | null>(null);
   const sessionStartRef = useRef<number>(Date.now());
+  const consumedAcceptedGameIdsRef = useRef<Set<string>>(new Set());
 
   const invitesRealtimeHealthy =
     realtimeEnabled &&
@@ -451,12 +452,14 @@ export function useGomokuGame() {
       (item) =>
         item.status === "accepted" &&
         item.game_id &&
+        !consumedAcceptedGameIdsRef.current.has(item.game_id) &&
         new Date(item.created_at).getTime() >= sessionStartRef.current,
     );
     if (!acceptedInvite?.game_id) {
       return;
     }
 
+    consumedAcceptedGameIdsRef.current.add(acceptedInvite.game_id);
     setCurrentGameId(acceptedInvite.game_id);
     setFinishedResultTitle(null);
     setNotice("邀请已被接受，对局已开始");
@@ -799,6 +802,7 @@ export function useGomokuGame() {
 
       const nextTarget = formatUserDisplay(invite.from_user);
       setTargetInviteId(nextTarget === "-" ? "" : nextTarget);
+      consumedAcceptedGameIdsRef.current.add(gameData.id);
       setCurrentGameId(gameData.id);
       setFinishedResultTitle(null);
       void queryClient.invalidateQueries({
@@ -896,6 +900,7 @@ export function useGomokuGame() {
         const nextTarget = formatUserDisplay(getOpponent(activeGame, userId));
         setTargetInviteId(nextTarget === "-" ? "" : nextTarget);
         setFinishedResultTitle(winner ? "Victory" : draw ? "Draw" : null);
+        consumedAcceptedGameIdsRef.current.add(activeGame.id);
         setCurrentGameId(null);
         setNotice("本局已结束，已释放本局实时连接。若要继续请重新邀请。");
         setTimeout(() => setNotice(null), 1800);

@@ -23,6 +23,9 @@ export function GomokuCanvas({
 }: GomokuCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const boardCacheRef = useRef<HTMLCanvasElement | null>(null);
+  const boardCacheKeyRef = useRef<string>("");
+  const drawKeyRef = useRef<string>("");
   const [canvasSize, setCanvasSize] = useState(MIN_CANVAS_SIZE);
 
   const stones = useMemo(() => {
@@ -83,51 +86,79 @@ export function GomokuCanvas({
       return;
     }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, displaySize, displaySize);
-
     const margin = displaySize * 0.06;
     const cell = (displaySize - margin * 2) / (BOARD_SIZE - 1);
     const boardMin = margin;
     const boardMax = margin + cell * (BOARD_SIZE - 1);
 
-    const boardGradient = ctx.createLinearGradient(
-      0,
-      0,
-      displaySize,
-      displaySize,
-    );
-    boardGradient.addColorStop(0, "#f5d79a");
-    boardGradient.addColorStop(1, "#e9bc6d");
-    ctx.fillStyle = boardGradient;
-    ctx.fillRect(0, 0, displaySize, displaySize);
-
-    ctx.strokeStyle = "rgba(92, 55, 10, 0.85)";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < BOARD_SIZE; i += 1) {
-      const p = margin + i * cell;
-      ctx.beginPath();
-      ctx.moveTo(boardMin, p);
-      ctx.lineTo(boardMax, p);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(p, boardMin);
-      ctx.lineTo(p, boardMax);
-      ctx.stroke();
+    const stonesKey = stones
+      .map((item) => `${item.x},${item.y},${item.isBlack ? 1 : 0}`)
+      .join(";");
+    const drawKey = `${displaySize}:${dpr}:${stonesKey}`;
+    if (drawKeyRef.current === drawKey) {
+      return;
     }
+    drawKeyRef.current = drawKey;
 
-    const starPoints = [3, 7, 11];
-    ctx.fillStyle = "rgba(92, 55, 10, 0.9)";
-    for (const gx of starPoints) {
-      for (const gy of starPoints) {
-        const x = margin + gx * cell;
-        const y = margin + gy * cell;
-        ctx.beginPath();
-        ctx.arc(x, y, Math.max(2.5, cell * 0.1), 0, Math.PI * 2);
-        ctx.fill();
+    const cacheKey = `${displaySize}:${dpr}`;
+    if (boardCacheKeyRef.current !== cacheKey || !boardCacheRef.current) {
+      const cacheCanvas = document.createElement("canvas");
+      cacheCanvas.width = canvas.width;
+      cacheCanvas.height = canvas.height;
+      const cacheCtx = cacheCanvas.getContext("2d");
+      if (!cacheCtx) {
+        return;
       }
+
+      cacheCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cacheCtx.clearRect(0, 0, displaySize, displaySize);
+
+      const boardGradient = cacheCtx.createLinearGradient(
+        0,
+        0,
+        displaySize,
+        displaySize,
+      );
+      boardGradient.addColorStop(0, "#f5d79a");
+      boardGradient.addColorStop(1, "#e9bc6d");
+      cacheCtx.fillStyle = boardGradient;
+      cacheCtx.fillRect(0, 0, displaySize, displaySize);
+
+      cacheCtx.strokeStyle = "rgba(92, 55, 10, 0.85)";
+      cacheCtx.lineWidth = 1;
+      for (let i = 0; i < BOARD_SIZE; i += 1) {
+        const p = margin + i * cell;
+        cacheCtx.beginPath();
+        cacheCtx.moveTo(boardMin, p);
+        cacheCtx.lineTo(boardMax, p);
+        cacheCtx.stroke();
+
+        cacheCtx.beginPath();
+        cacheCtx.moveTo(p, boardMin);
+        cacheCtx.lineTo(p, boardMax);
+        cacheCtx.stroke();
+      }
+
+      const starPoints = [3, 7, 11];
+      cacheCtx.fillStyle = "rgba(92, 55, 10, 0.9)";
+      for (const gx of starPoints) {
+        for (const gy of starPoints) {
+          const x = margin + gx * cell;
+          const y = margin + gy * cell;
+          cacheCtx.beginPath();
+          cacheCtx.arc(x, y, Math.max(2.5, cell * 0.1), 0, Math.PI * 2);
+          cacheCtx.fill();
+        }
+      }
+
+      boardCacheRef.current = cacheCanvas;
+      boardCacheKeyRef.current = cacheKey;
     }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(boardCacheRef.current, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     for (const stone of stones) {
       const cx = margin + stone.x * cell;
