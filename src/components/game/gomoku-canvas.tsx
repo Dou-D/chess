@@ -25,7 +25,6 @@ export function GomokuCanvas({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const boardCacheRef = useRef<HTMLCanvasElement | null>(null);
   const boardCacheKeyRef = useRef<string>("");
-  const drawKeyRef = useRef<string>("");
   const [canvasSize, setCanvasSize] = useState(MIN_CANVAS_SIZE);
 
   const stones = useMemo(() => {
@@ -91,15 +90,6 @@ export function GomokuCanvas({
     const boardMin = margin;
     const boardMax = margin + cell * (BOARD_SIZE - 1);
 
-    const stonesKey = stones
-      .map((item) => `${item.x},${item.y},${item.isBlack ? 1 : 0}`)
-      .join(";");
-    const drawKey = `${displaySize}:${dpr}:${stonesKey}`;
-    if (drawKeyRef.current === drawKey) {
-      return;
-    }
-    drawKeyRef.current = drawKey;
-
     const cacheKey = `${displaySize}:${dpr}`;
     if (boardCacheKeyRef.current !== cacheKey || !boardCacheRef.current) {
       const cacheCanvas = document.createElement("canvas");
@@ -157,7 +147,9 @@ export function GomokuCanvas({
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(boardCacheRef.current, 0, 0);
+    if (boardCacheRef.current) {
+      ctx.drawImage(boardCacheRef.current, 0, 0);
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     for (const stone of stones) {
@@ -223,6 +215,7 @@ export function GomokuCanvas({
         className={`mx-auto block rounded-md border border-amber-900/80 shadow-sm ${
           disabled ? "cursor-not-allowed" : "cursor-crosshair"
         }`}
+        style={{ backgroundColor: "#f5d79a" }}
         role="img"
         aria-label="Gomoku Board Canvas"
         onClick={handleCanvasClick}
