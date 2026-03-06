@@ -1,8 +1,8 @@
 import { memo } from "react";
-import { BOARD_SIZE, type Game } from "../../types/game";
+import type { Game } from "../../types/game";
 import { shortId } from "../../lib/gomoku";
 import { Badge } from "../ui/badge";
-import { GameFinishOverlay } from "./game-finish-overlay";
+import { GomokuCanvas } from "./gomoku-canvas";
 import {
   Card,
   CardContent,
@@ -18,11 +18,9 @@ type BoardCardProps = {
   myColor: string | null;
   opponentId: string | null;
   busy: boolean;
-  rematchCountdown: number;
-  myRematchReady: boolean;
-  opponentRematchReady: boolean;
-  rematchAvailable: boolean;
-  onRematchChoice: (accept: boolean) => Promise<void>;
+  isMyTurn: boolean;
+  turnCountdown: number;
+  syncMode: "websocket" | "fallback" | "disconnected";
   onPlaceStone: (x: number, y: number) => Promise<void>;
 };
 
@@ -33,11 +31,9 @@ export const BoardCard = memo(function BoardCard({
   myColor,
   opponentId,
   busy,
-  rematchCountdown,
-  myRematchReady,
-  opponentRematchReady,
-  rematchAvailable,
-  onRematchChoice,
+  isMyTurn,
+  turnCountdown,
+  syncMode,
   onPlaceStone,
 }: BoardCardProps) {
   const statusText = !activeGame
@@ -72,63 +68,59 @@ export const BoardCard = memo(function BoardCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Badge
-          variant={
-            activeGame?.current_turn === userId ? "default" : "secondary"
-          }
-        >
-          {statusText}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant={
+              activeGame?.current_turn === userId ? "default" : "secondary"
+            }
+          >
+            {statusText}
+          </Badge>
+          <Badge
+            variant={
+              syncMode === "websocket"
+                ? "success"
+                : syncMode === "fallback"
+                  ? "secondary"
+                  : "default"
+            }
+          >
+            {syncMode === "websocket"
+              ? "WebSocket"
+              : syncMode === "fallback"
+                ? "轮询降级"
+                : "已断开"}
+          </Badge>
+          {isMyTurn ? (
+            <Badge variant={turnCountdown <= 5 ? "secondary" : "default"}>
+              你的回合: {turnCountdown}s
+            </Badge>
+          ) : null}
+        </div>
 
         <div className="relative overflow-x-auto rounded-lg border border-stone-300 bg-stone-200 p-2">
-          <div
-            className="mx-auto grid min-w-[320px] max-w-[680px] gap-[2px] rounded-md border border-amber-900 bg-amber-900 p-1"
-            style={{
-              gridTemplateColumns: `repeat(${BOARD_SIZE}, minmax(0, 1fr))`,
+          <GomokuCanvas
+            board={board}
+            blackPlayerId={activeGame?.black_player ?? null}
+            disabled={busy || !activeGame || activeGame.status !== "playing"}
+            onPlaceStone={(x, y) => {
+              void onPlaceStone(x, y);
             }}
-            role="grid"
-            aria-label="Gomoku Board"
-          >
-            {Array.from({ length: BOARD_SIZE }).map((_, y) =>
-              Array.from({ length: BOARD_SIZE }).map((__, x) => {
-                const cellPlayer = board[y][x];
-                const stoneClass =
-                  cellPlayer == null
-                    ? ""
-                    : activeGame && cellPlayer === activeGame.black_player
-                      ? "bg-stone-900"
-                      : "bg-stone-100 ring-1 ring-stone-300";
-
-                return (
-                  <button
-                    key={`${x}-${y}`}
-                    className="flex aspect-square items-center justify-center bg-amber-300 hover:bg-amber-200 disabled:cursor-not-allowed disabled:hover:bg-amber-300"
-                    onClick={() => onPlaceStone(x, y)}
-                    disabled={!activeGame || activeGame.status !== "playing"}
-                    title={`${x},${y}`}
-                  >
-                    {stoneClass ? (
-                      <span
-                        className={`h-[78%] w-[78%] rounded-full ${stoneClass}`}
-                      />
-                    ) : null}
-                  </button>
-                );
-              }),
-            )}
-          </div>
-
-          <GameFinishOverlay
-            visible={activeGame?.status === "finished"}
-            title={gameFinishTitle}
-            countdown={rematchCountdown}
-            myReady={myRematchReady}
-            opponentReady={opponentRematchReady}
-            rematchAvailable={rematchAvailable}
-            busy={busy}
-            onRematch={() => onRematchChoice(true)}
-            onExit={() => onRematchChoice(false)}
           />
+
+          {activeGame?.status === "finished" ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-stone-900/55 p-3">
+              <div className="rounded-xl bg-white/95 px-5 py-4 text-center shadow-lg">
+                <p className="text-2xl font-bold text-stone-900">
+                  {gameFinishTitle}
+                </p>
+                <p className="mt-1 text-sm text-stone-600">
+                  本局结束，已释放上一局连接。可直接用上方已保存的对手 ID
+                  再次邀请。
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
       </CardContent>
     </Card>

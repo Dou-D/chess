@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { Invite } from "../../types/game";
 import { shortId } from "../../lib/gomoku";
 import { Badge } from "../ui/badge";
@@ -15,25 +14,26 @@ import { Input } from "../ui/input";
 type InviteCardProps = {
   loading: boolean;
   busy: boolean;
+  targetId: string;
   outgoingInvites: Invite[];
   incomingInvites: Invite[];
-  onSendInvite: (targetId: string) => Promise<void>;
+  onTargetIdChange: (value: string) => void;
+  onSendInvite: () => Promise<void>;
   onRespondInvite: (invite: Invite, accepted: boolean) => Promise<void>;
 };
 
 export function InviteCard({
   loading,
   busy,
+  targetId,
   outgoingInvites,
   incomingInvites,
+  onTargetIdChange,
   onSendInvite,
   onRespondInvite,
 }: InviteCardProps) {
-  const [targetId, setTargetId] = useState("");
-
   const handleSend = async () => {
-    await onSendInvite(targetId);
-    setTargetId("");
+    await onSendInvite();
   };
 
   return (
@@ -46,7 +46,7 @@ export function InviteCard({
         <div className="flex flex-col gap-2 sm:flex-row">
           <Input
             value={targetId}
-            onChange={(event) => setTargetId(event.target.value)}
+            onChange={(event) => onTargetIdChange(event.target.value)}
             placeholder="粘贴对方用户 ID"
           />
           <Button disabled={busy || loading} onClick={handleSend}>

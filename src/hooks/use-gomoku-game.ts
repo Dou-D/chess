@@ -3,33 +3,30 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createBoard, hasFive } from "../lib/gomoku";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
-import {
-  BOARD_SIZE,
-  type Game,
-  type Invite,
-  type Move,
-  type RematchVote,
-} from "../types/game";
+import { BOARD_SIZE, type Game, type Invite, type Move } from "../types/game";
 
 type RealtimeState = {
   incomingInvites: boolean;
   outgoingInvites: boolean;
   games: boolean;
   moves: boolean;
-  rematch: boolean;
 };
+
+type PlaceStoneOptions = {
+  silent?: boolean;
+};
+
+const TURN_SECONDS = 15;
 
 const DEFAULT_REALTIME_STATE: RealtimeState = {
   incomingInvites: false,
   outgoingInvites: false,
   games: false,
   moves: false,
-  rematch: false,
 };
 
-function getMsLeft(expiresAt: string) {
-  const expires = new Date(expiresAt).getTime();
-  return expires - Date.now();
+function getOpponent(game: Game, userId: string) {
+  return game.black_player === userId ? game.white_player : game.black_player;
 }
 
 export function useGomokuGame() {
@@ -40,24 +37,25 @@ export function useGomokuGame() {
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [rematchAvailable, setRematchAvailable] = useState(true);
   const [realtimeEnabled, setRealtimeEnabled] = useState(true);
   const [realtimeState, setRealtimeState] = useState<RealtimeState>(
     DEFAULT_REALTIME_STATE,
   );
-  const [rematchCountdown, setRematchCountdown] = useState(0);
+  const [targetInviteId, setTargetInviteId] = useState("");
+  const [turnCountdown, setTurnCountdown] = useState(0);
 
-  const timeoutHandledForGame = useRef<string | null>(null);
+  const turnAnchorRef = useRef<string | null>(null);
+  const turnDeadlineRef = useRef<number | null>(null);
+  const autoMoveLockRef = useRef<string | null>(null);
+  const prevActiveGameRef = useRef<Game | null>(null);
 
   const invitesRealtimeHealthy =
     realtimeEnabled &&
     realtimeState.incomingInvites &&
     realtimeState.outgoingInvites;
+
   const gameRealtimeHealthy =
-    realtimeEnabled &&
-    realtimeState.games &&
-    realtimeState.moves &&
-    realtimeState.rematch;
+    realtimeEnabled && realtimeState.games && realtimeState.moves;
 
   const lobbyRealtimeHealthy =
     realtimeEnabled &&
@@ -65,20 +63,15 @@ export function useGomokuGame() {
     realtimeState.outgoingInvites &&
     realtimeState.games;
 
-  const handleRematchMissing = useCallback(() => {
-    setRematchAvailable(false);
-    setErrorMessage(
-      "再来一局功能未启用：请到 Supabase 执行最新 supabase/schema.sql（缺少 rematch_votes 表）。",
-    );
-  }, []);
-
   const disconnectRealtime = useCallback((message?: string) => {
     setRealtimeEnabled(false);
     setRealtimeState(DEFAULT_REALTIME_STATE);
-    if (message) {
-      setNotice(message);
-      setTimeout(() => setNotice(null), 1800);
+    if (!message) {
+      return;
     }
+
+    setNotice(message);
+    setTimeout(() => setNotice(null), 1800);
   }, []);
 
   const reconnectRealtime = useCallback(() => {
@@ -91,17 +84,18 @@ export function useGomokuGame() {
     setNotice("已重新连接实时同步");
     setTimeout(() => setNotice(null), 1200);
 
-    if (userId) {
-      void queryClient.invalidateQueries({
-        queryKey: ["incomingInvites", userId],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["outgoingInvites", userId],
-      });
-      void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
-      void queryClient.invalidateQueries({ queryKey: ["moves"] });
-      void queryClient.invalidateQueries({ queryKey: ["rematchVote"] });
+    if (!userId) {
+      return;
     }
+
+    void queryClient.invalidateQueries({
+      queryKey: ["incomingInvites", userId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["outgoingInvites", userId],
+    });
+    void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
+    void queryClient.invalidateQueries({ queryKey: ["moves"] });
   }, [queryClient, realtimeEnabled, userId]);
 
   useEffect(() => {
@@ -208,7 +202,7 @@ export function useGomokuGame() {
         .from("games")
         .select("*")
         .or(`black_player.eq.${userId!},white_player.eq.${userId!}`)
-        .in("status", ["waiting", "playing", "finished"])
+        .in("status", ["waiting", "playing"])
         .order("created_at", { ascending: false })
         .limit(1);
 
@@ -216,9 +210,7 @@ export function useGomokuGame() {
         throw new Error(error.message);
       }
 
-      return (
-        data && data.length > 0 ? (data[0] as Game) : null
-      ) as Game | null;
+      return data && data.length > 0 ? (data[0] as Game) : null;
     },
   });
 
@@ -257,88 +249,9 @@ export function useGomokuGame() {
     },
   });
 
-  const rematchVoteQuery = useQuery({
-    queryKey: ["rematchVote", activeGame?.id],
-    enabled: Boolean(
-      activeGame?.id &&
-      activeGame.status === "finished" &&
-      supabase &&
-      rematchAvailable,
-    ),
-    refetchInterval: realtimeEnabled
-      ? realtimeState.rematch
-        ? false
-        : 900
-      : false,
-    queryFn: async () => {
-      const { data, error } = await supabase!
-        .from("rematch_votes")
-        .select("*")
-        .eq("game_id", activeGame!.id)
-        .maybeSingle();
-
-      if (error) {
-        if (error.message.includes("public.rematch_votes")) {
-          handleRematchMissing();
-          return null;
-        }
-        throw new Error(error.message);
-      }
-
-      return (data as RematchVote | null) ?? null;
-    },
-  });
-
   const incomingInvites = incomingInvitesQuery.data ?? [];
   const outgoingInvites = outgoingInvitesQuery.data ?? [];
   const moves = movesQuery.data ?? [];
-  const rematchVote = rematchVoteQuery.data ?? null;
-
-  useEffect(() => {
-    if (
-      !supabase ||
-      !activeGame ||
-      activeGame.status !== "finished" ||
-      rematchVote ||
-      !realtimeEnabled ||
-      !rematchAvailable
-    ) {
-      return;
-    }
-
-    const client = supabase;
-
-    const ensureRematchVote = async () => {
-      const { error } = await client
-        .from("rematch_votes")
-        .insert({
-          game_id: activeGame.id,
-          status: "pending",
-          expires_at: new Date(Date.now() + 60_000).toISOString(),
-        })
-        .select("game_id")
-        .single();
-
-      if (error && error.message.includes("public.rematch_votes")) {
-        handleRematchMissing();
-        return;
-      }
-
-      void queryClient.invalidateQueries({
-        queryKey: ["rematchVote", activeGame.id],
-      });
-    };
-
-    void ensureRematchVote();
-  }, [
-    activeGame?.id,
-    activeGame?.status,
-    handleRematchMissing,
-    rematchVote,
-    rematchAvailable,
-    realtimeEnabled,
-    queryClient,
-  ]);
 
   const loading =
     authLoading ||
@@ -351,8 +264,7 @@ export function useGomokuGame() {
       incomingInvitesQuery.error ??
       outgoingInvitesQuery.error ??
       activeGameQuery.error ??
-      movesQuery.error ??
-      (rematchAvailable ? rematchVoteQuery.error : null);
+      movesQuery.error;
 
     if (!firstError) {
       return;
@@ -364,7 +276,6 @@ export function useGomokuGame() {
     outgoingInvitesQuery.error,
     activeGameQuery.error,
     movesQuery.error,
-    rematchVoteQuery.error,
   ]);
 
   const board = useMemo(() => createBoard(moves), [moves]);
@@ -377,6 +288,7 @@ export function useGomokuGame() {
     if (activeGame.black_player === userId) {
       return "Black";
     }
+
     if (activeGame.white_player === userId) {
       return "White";
     }
@@ -389,101 +301,32 @@ export function useGomokuGame() {
       return null;
     }
 
-    return activeGame.black_player === userId
-      ? activeGame.white_player
-      : activeGame.black_player;
+    return getOpponent(activeGame, userId);
   }, [activeGame, userId]);
 
-  const isBlack = Boolean(
-    activeGame && userId && activeGame.black_player === userId,
+  const isMyTurn = Boolean(
+    activeGame &&
+    activeGame.status === "playing" &&
+    userId &&
+    activeGame.current_turn === userId,
   );
-  const myRematchReady = activeGame
-    ? isBlack
-      ? (rematchVote?.black_ready ?? false)
-      : (rematchVote?.white_ready ?? false)
-    : false;
-  const opponentRematchReady = activeGame
-    ? isBlack
-      ? (rematchVote?.white_ready ?? false)
-      : (rematchVote?.black_ready ?? false)
-    : false;
 
   useEffect(() => {
-    if (!activeGame || activeGame.status !== "finished") {
-      setRematchCountdown(0);
-      timeoutHandledForGame.current = null;
-      return;
+    const previous = prevActiveGameRef.current;
+    if (
+      previous &&
+      userId &&
+      (!activeGame || activeGame.id !== previous.id) &&
+      (previous.status === "playing" || previous.status === "finished")
+    ) {
+      const lastOpponent = getOpponent(previous, userId);
+      setTargetInviteId(lastOpponent);
+      setNotice("对局已结束，可直接再次邀请同一位对手。");
+      setTimeout(() => setNotice(null), 1800);
     }
 
-    if (!rematchVote || rematchVote.status !== "pending") {
-      setRematchCountdown(0);
-      return;
-    }
-
-    const gameId = activeGame.id;
-    const tick = () => {
-      const msLeft = getMsLeft(rematchVote.expires_at);
-      const secLeft = Math.max(0, Math.ceil(msLeft / 1000));
-      setRematchCountdown(secLeft);
-
-      if (msLeft > 0 || timeoutHandledForGame.current === gameId || !supabase) {
-        return;
-      }
-
-      timeoutHandledForGame.current = gameId;
-      void supabase
-        .from("rematch_votes")
-        .update({ status: "timeout" })
-        .eq("game_id", gameId)
-        .eq("status", "pending");
-
-      disconnectRealtime("超时未确认再来一局，实时连接已关闭。");
-    };
-
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [
-    activeGame?.id,
-    activeGame?.status,
-    rematchVote?.status,
-    rematchVote?.expires_at,
-  ]);
-
-  useEffect(() => {
-    if (!activeGame || activeGame.status !== "finished" || !rematchVote) {
-      return;
-    }
-
-    if (rematchVote.status === "declined") {
-      disconnectRealtime("有玩家拒绝再来一局，实时连接已关闭。");
-      return;
-    }
-
-    if (rematchVote.status === "timeout") {
-      disconnectRealtime("再来一局超时，实时连接已关闭。");
-      return;
-    }
-
-    if (rematchVote.status === "accepted" && rematchVote.next_game_id) {
-      void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
-      void queryClient.invalidateQueries({
-        queryKey: ["moves", rematchVote.next_game_id],
-      });
-      setNotice("双方确认完成，已开始下一局");
-      setTimeout(() => setNotice(null), 1200);
-      timeoutHandledForGame.current = null;
-    }
-  }, [
-    activeGame?.id,
-    activeGame?.status,
-    rematchVote?.status,
-    rematchVote?.next_game_id,
-    queryClient,
-    userId,
-  ]);
+    prevActiveGameRef.current = activeGame;
+  }, [activeGame, userId]);
 
   useEffect(() => {
     if (!supabase || !userId || !realtimeEnabled) {
@@ -498,6 +341,7 @@ export function useGomokuGame() {
         if (prev[key] === connected) {
           return prev;
         }
+
         return { ...prev, [key]: connected };
       });
     };
@@ -557,9 +401,6 @@ export function useGomokuGame() {
             void queryClient.invalidateQueries({
               queryKey: ["moves", activeGame.id],
             });
-            void queryClient.invalidateQueries({
-              queryKey: ["rematchVote", activeGame.id],
-            });
           }
         },
       )
@@ -590,6 +431,7 @@ export function useGomokuGame() {
                   if (current.some((item) => item.id === nextMove.id)) {
                     return current;
                   }
+
                   return [...current, nextMove].sort(
                     (a, b) => a.move_index - b.move_index,
                   );
@@ -610,37 +452,8 @@ export function useGomokuGame() {
           markRealtime("moves", status === "SUBSCRIBED");
         });
       channels.push(movesChannel);
-
-      if (rematchAvailable) {
-        const rematchChannel = client
-          .channel(`rematch:${userId}:${currentGameId}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "public",
-              table: "rematch_votes",
-              filter: `game_id=eq.${currentGameId}`,
-            },
-            () => {
-              void queryClient.invalidateQueries({
-                queryKey: ["rematchVote", currentGameId],
-              });
-              void queryClient.invalidateQueries({
-                queryKey: ["activeGame", userId],
-              });
-            },
-          )
-          .subscribe((status) => {
-            markRealtime("rematch", status === "SUBSCRIBED");
-          });
-        channels.push(rematchChannel);
-      } else {
-        markRealtime("rematch", false);
-      }
     } else {
       markRealtime("moves", false);
-      markRealtime("rematch", false);
     }
 
     return () => {
@@ -697,46 +510,43 @@ export function useGomokuGame() {
     }
   }, [userId]);
 
-  const sendInvite = useCallback(
-    async (toUserInput: string) => {
-      if (!supabase || !userId) {
-        return;
-      }
+  const sendInvite = useCallback(async () => {
+    if (!supabase || !userId) {
+      return;
+    }
 
-      const toUser = toUserInput.trim();
-      if (!toUser) {
-        setErrorMessage("请输入对方 ID");
-        return;
-      }
+    const toUser = targetInviteId.trim();
+    if (!toUser) {
+      setErrorMessage("请输入对方 ID");
+      return;
+    }
 
-      if (toUser === userId) {
-        setErrorMessage("不能邀请自己");
-        return;
-      }
+    if (toUser === userId) {
+      setErrorMessage("不能邀请自己");
+      return;
+    }
 
-      setBusy(true);
-      setErrorMessage(null);
+    setBusy(true);
+    setErrorMessage(null);
 
-      const { error } = await supabase.from("invites").insert({
-        from_user: userId,
-        to_user: toUser,
-        status: "pending",
-      });
+    const { error } = await supabase.from("invites").insert({
+      from_user: userId,
+      to_user: toUser,
+      status: "pending",
+    });
 
-      setBusy(false);
-      if (error) {
-        setErrorMessage(`发送邀请失败: ${error.message}`);
-        return;
-      }
+    setBusy(false);
+    if (error) {
+      setErrorMessage(`发送邀请失败: ${error.message}`);
+      return;
+    }
 
-      setNotice("邀请已发送");
-      setTimeout(() => setNotice(null), 1200);
-      void queryClient.invalidateQueries({
-        queryKey: ["outgoingInvites", userId],
-      });
-    },
-    [queryClient, userId],
-  );
+    setNotice("邀请已发送");
+    setTimeout(() => setNotice(null), 1200);
+    void queryClient.invalidateQueries({
+      queryKey: ["outgoingInvites", userId],
+    });
+  }, [queryClient, targetInviteId, userId]);
 
   const respondInvite = useCallback(
     async (invite: Invite, accepted: boolean) => {
@@ -793,6 +603,7 @@ export function useGomokuGame() {
         return;
       }
 
+      setTargetInviteId(invite.from_user);
       void queryClient.invalidateQueries({
         queryKey: ["incomingInvites", userId],
       });
@@ -805,192 +616,8 @@ export function useGomokuGame() {
     [queryClient, userId],
   );
 
-  const tryStartRematch = useCallback(async (vote: RematchVote, game: Game) => {
-    if (!supabase || !userId) {
-      return;
-    }
-
-    if (!(vote.black_ready && vote.white_ready) || vote.status !== "pending") {
-      return;
-    }
-
-    const { data: lockRows, error: lockError } = await supabase
-      .from("rematch_votes")
-      .update({ status: "starting" })
-      .eq("game_id", game.id)
-      .eq("status", "pending")
-      .eq("black_ready", true)
-      .eq("white_ready", true)
-      .is("next_game_id", null)
-      .select("*");
-
-    if (lockError || !lockRows || lockRows.length === 0) {
-      if (lockError?.message?.includes("public.rematch_votes")) {
-        handleRematchMissing();
-      }
-      return;
-    }
-
-    const { data: newGame, error: newGameError } = await supabase
-      .from("games")
-      .insert({
-        black_player: game.black_player,
-        white_player: game.white_player,
-        status: "playing",
-        current_turn: game.black_player,
-      })
-      .select("*")
-      .single();
-
-    if (newGameError || !newGame) {
-      await supabase
-        .from("rematch_votes")
-        .update({ status: "pending" })
-        .eq("game_id", game.id)
-        .eq("status", "starting");
-      return;
-    }
-
-    await supabase
-      .from("rematch_votes")
-      .update({ status: "accepted", next_game_id: newGame.id })
-      .eq("game_id", game.id);
-
-    void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
-    void queryClient.invalidateQueries({ queryKey: ["moves", newGame.id] });
-    void queryClient.invalidateQueries({ queryKey: ["rematchVote", game.id] });
-  }, [handleRematchMissing, queryClient, userId]);
-
-  const chooseRematch = useCallback(
-    async (accept: boolean) => {
-      if (
-        !supabase ||
-        !activeGame ||
-        !userId ||
-        activeGame.status !== "finished"
-      ) {
-        return;
-      }
-
-      if (!rematchAvailable) {
-        handleRematchMissing();
-        return;
-      }
-
-      setBusy(true);
-      setErrorMessage(null);
-
-      const blackReady = activeGame.black_player === userId;
-      const whiteReady = activeGame.white_player === userId;
-
-      if (!accept) {
-        const payload = {
-          game_id: activeGame.id,
-          black_ready: false,
-          white_ready: false,
-          status: "declined",
-        };
-
-        const { error } = rematchVote
-          ? await supabase
-              .from("rematch_votes")
-              .update(payload)
-              .eq("game_id", activeGame.id)
-          : await supabase.from("rematch_votes").insert(payload);
-
-        setBusy(false);
-        if (error) {
-          if (error.message.includes("public.rematch_votes")) {
-            handleRematchMissing();
-            return;
-          }
-          setErrorMessage(`提交再来一局选择失败: ${error.message}`);
-          return;
-        }
-
-        void queryClient.invalidateQueries({
-          queryKey: ["rematchVote", activeGame.id],
-        });
-        disconnectRealtime("你已结束本局，实时连接已关闭。");
-        return;
-      }
-
-      let nextVote: RematchVote | null = rematchVote;
-      if (!nextVote) {
-        const { data, error } = await supabase
-          .from("rematch_votes")
-          .insert({
-            game_id: activeGame.id,
-            black_ready: blackReady,
-            white_ready: whiteReady,
-            status: "pending",
-            expires_at: new Date(Date.now() + 60_000).toISOString(),
-          })
-          .select("*")
-          .single();
-
-        if (error || !data) {
-          setBusy(false);
-          if (error?.message?.includes("public.rematch_votes")) {
-            handleRematchMissing();
-            return;
-          }
-          setErrorMessage(`提交再来一局失败: ${error?.message ?? "未知错误"}`);
-          return;
-        }
-
-        nextVote = data as RematchVote;
-      } else {
-        if (nextVote.status === "declined" || nextVote.status === "timeout") {
-          setBusy(false);
-          setErrorMessage("本局再来一局已结束，无法再次确认。");
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from("rematch_votes")
-          .update({
-            black_ready: blackReady ? true : nextVote.black_ready,
-            white_ready: whiteReady ? true : nextVote.white_ready,
-            status: "pending",
-          })
-          .eq("game_id", activeGame.id)
-          .select("*")
-          .single();
-
-        if (error || !data) {
-          setBusy(false);
-          if (error?.message?.includes("public.rematch_votes")) {
-            handleRematchMissing();
-            return;
-          }
-          setErrorMessage(`更新再来一局失败: ${error?.message ?? "未知错误"}`);
-          return;
-        }
-
-        nextVote = data as RematchVote;
-      }
-
-      await tryStartRematch(nextVote, activeGame);
-      void queryClient.invalidateQueries({
-        queryKey: ["rematchVote", activeGame.id],
-      });
-      void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
-      setBusy(false);
-    },
-    [
-      activeGame,
-      handleRematchMissing,
-      queryClient,
-      rematchAvailable,
-      rematchVote,
-      tryStartRematch,
-      userId,
-    ],
-  );
-
   const placeStone = useCallback(
-    async (x: number, y: number) => {
+    async (x: number, y: number, options?: PlaceStoneOptions) => {
       if (!supabase || !activeGame || !userId) {
         return;
       }
@@ -1000,12 +627,16 @@ export function useGomokuGame() {
       }
 
       if (activeGame.current_turn !== userId) {
-        setErrorMessage("还没轮到你落子");
+        if (!options?.silent) {
+          setErrorMessage("还没轮到你落子");
+        }
         return;
       }
 
       if (board[y][x]) {
-        setErrorMessage("该位置已有棋子");
+        if (!options?.silent) {
+          setErrorMessage("该位置已有棋子");
+        }
         return;
       }
 
@@ -1025,7 +656,9 @@ export function useGomokuGame() {
         .single();
 
       if (moveError || !inserted) {
-        setErrorMessage(`落子失败: ${moveError?.message ?? "未知错误"}`);
+        if (!options?.silent) {
+          setErrorMessage(`落子失败: ${moveError?.message ?? "未知错误"}`);
+        }
         return;
       }
 
@@ -1054,19 +687,92 @@ export function useGomokuGame() {
         .eq("id", activeGame.id);
 
       if (gameError) {
-        setErrorMessage(`更新对局状态失败: ${gameError.message}`);
+        if (!options?.silent) {
+          setErrorMessage(`更新对局状态失败: ${gameError.message}`);
+        }
         return;
       }
 
       queryClient.setQueryData<Move[]>(["moves", activeGame.id], nextMoves);
-      queryClient.setQueryData<Game | null>(["activeGame", userId], {
-        ...activeGame,
-        ...updatePayload,
-      });
+
+      if (updatePayload.status === "finished") {
+        setTargetInviteId(getOpponent(activeGame, userId));
+      }
+
       void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["moves", activeGame.id],
+      });
     },
     [activeGame, board, moves, queryClient, userId],
   );
+
+  useEffect(() => {
+    if (
+      !activeGame ||
+      !userId ||
+      activeGame.status !== "playing" ||
+      !isMyTurn
+    ) {
+      setTurnCountdown(0);
+      turnAnchorRef.current = null;
+      turnDeadlineRef.current = null;
+      autoMoveLockRef.current = null;
+      return;
+    }
+
+    const turnAnchor = `${activeGame.id}:${activeGame.current_turn}:${moves.length}`;
+    if (turnAnchorRef.current !== turnAnchor) {
+      turnAnchorRef.current = turnAnchor;
+      turnDeadlineRef.current = Date.now() + TURN_SECONDS * 1000;
+      autoMoveLockRef.current = null;
+    }
+
+    const tick = () => {
+      const deadline = turnDeadlineRef.current;
+      if (!deadline) {
+        setTurnCountdown(0);
+        return;
+      }
+
+      const leftMs = deadline - Date.now();
+      const leftSec = Math.max(0, Math.ceil(leftMs / 1000));
+      setTurnCountdown(leftSec);
+
+      if (leftMs > 0) {
+        return;
+      }
+
+      const autoMoveKey = `${activeGame.id}:${moves.length}:${userId}`;
+      if (autoMoveLockRef.current === autoMoveKey) {
+        return;
+      }
+      autoMoveLockRef.current = autoMoveKey;
+
+      const emptyCells: Array<{ x: number; y: number }> = [];
+      for (let y = 0; y < BOARD_SIZE; y += 1) {
+        for (let x = 0; x < BOARD_SIZE; x += 1) {
+          if (!board[y][x]) {
+            emptyCells.push({ x, y });
+          }
+        }
+      }
+
+      if (emptyCells.length === 0) {
+        return;
+      }
+
+      const randomIndex = Math.floor(Math.random() * emptyCells.length);
+      const target = emptyCells[randomIndex];
+      void placeStone(target.x, target.y, { silent: true });
+    };
+
+    tick();
+    const timer = window.setInterval(tick, 250);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [activeGame, board, isMyTurn, moves.length, placeStone, userId]);
 
   return {
     isSupabaseConfigured,
@@ -1081,16 +787,16 @@ export function useGomokuGame() {
     errorMessage,
     myColor,
     opponentId,
-    rematchCountdown,
-    myRematchReady,
-    opponentRematchReady,
-    rematchAvailable,
+    targetInviteId,
+    turnCountdown,
+    isMyTurn,
     syncMode,
     copyUserId,
+    disconnectRealtime,
     reconnectRealtime,
+    setTargetInviteId,
     sendInvite,
     respondInvite,
-    chooseRematch,
     placeStone,
     clearError: () => setErrorMessage(null),
   };

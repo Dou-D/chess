@@ -21,16 +21,15 @@ function App() {
     errorMessage,
     myColor,
     opponentId,
-    rematchCountdown,
-    myRematchReady,
-    opponentRematchReady,
-    rematchAvailable,
+    targetInviteId,
+    turnCountdown,
+    isMyTurn,
     syncMode,
     copyUserId,
     reconnectRealtime,
+    setTargetInviteId,
     sendInvite,
     respondInvite,
-    chooseRematch,
     placeStone,
   } = useGomokuGame();
 
@@ -101,8 +100,10 @@ function App() {
             <InviteCard
               loading={loading}
               busy={busy}
+              targetId={targetInviteId}
               outgoingInvites={outgoingInvites}
               incomingInvites={incomingInvites}
+              onTargetIdChange={setTargetInviteId}
               onSendInvite={sendInvite}
               onRespondInvite={respondInvite}
             />
@@ -116,11 +117,9 @@ function App() {
           myColor={myColor}
           opponentId={opponentId}
           busy={busy}
-          rematchCountdown={rematchCountdown}
-          myRematchReady={myRematchReady}
-          opponentRematchReady={opponentRematchReady}
-          rematchAvailable={rematchAvailable}
-          onRematchChoice={chooseRematch}
+          isMyTurn={isMyTurn}
+          turnCountdown={turnCountdown}
+          syncMode={syncMode}
           onPlaceStone={placeStone}
         />
 

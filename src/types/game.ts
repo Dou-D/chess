@@ -2,12 +2,6 @@ export const BOARD_SIZE = 15;
 
 export type InviteStatus = "pending" | "accepted" | "rejected" | "cancelled";
 export type GameStatus = "waiting" | "playing" | "finished";
-export type RematchStatus =
-  | "pending"
-  | "starting"
-  | "accepted"
-  | "declined"
-  | "timeout";
 
 export type Invite = {
   id: string;
@@ -36,15 +30,4 @@ export type Move = {
   y: number;
   move_index: number;
   created_at: string;
-};
-
-export type RematchVote = {
-  game_id: string;
-  black_ready: boolean;
-  white_ready: boolean;
-  status: RematchStatus;
-  next_game_id: string | null;
-  expires_at: string;
-  created_at: string;
-  updated_at: string;
 };
