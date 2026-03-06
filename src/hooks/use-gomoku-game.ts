@@ -310,9 +310,45 @@ export function useGomokuGame() {
       return;
     }
 
-    await navigator.clipboard.writeText(userId);
-    setNotice("已复制你的用户 ID");
-    setTimeout(() => setNotice(null), 1200);
+    const fallbackCopy = (text: string) => {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return copied;
+    };
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(userId);
+      } else {
+        const copied = fallbackCopy(userId);
+        if (!copied) {
+          throw new Error("fallback copy failed");
+        }
+      }
+
+      setNotice("已复制你的用户 ID");
+      setErrorMessage(null);
+      setTimeout(() => setNotice(null), 1200);
+    } catch {
+      const copied = fallbackCopy(userId);
+      if (copied) {
+        setNotice("已复制你的用户 ID");
+        setErrorMessage(null);
+        setTimeout(() => setNotice(null), 1200);
+        return;
+      }
+
+      setErrorMessage(
+        "复制失败：请检查浏览器剪贴板权限，或手动选择上方 ID 进行复制。",
+      );
+    }
   }
 
   async function sendInvite(toUserInput: string) {
