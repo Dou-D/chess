@@ -6,7 +6,10 @@
 - `invites`
 - `games`
 - `moves`
-- `rematch_votes`
+
+Required column:
+
+- `profiles.public_id` (unique, used for invite lookup)
 
 ## Apply Schema
 
@@ -14,11 +17,11 @@ Run `supabase/schema.sql` in Supabase SQL Editor.
 
 ## Existing Project Migration (if already deployed)
 
-If your project already had the previous schema, execute the full `schema.sql` again or at least apply:
+If your project already had previous schema, execute full `schema.sql` again or at least ensure:
 
-- `create table public.rematch_votes ...`
-- RLS policies for `rematch_votes`
-- `set_rematch_updated_at` trigger
+- `alter table public.profiles add column public_id ...`
+- unique index for `public_id`
+- profiles select policy allows querying rows with non-null `public_id`
 
 ## Realtime Publication
 
@@ -27,7 +30,6 @@ Ensure these tables are in publication `supabase_realtime`:
 - `public.invites`
 - `public.games`
 - `public.moves`
-- `public.rematch_votes`
 
 SQL shortcut:
 
@@ -35,5 +37,4 @@ SQL shortcut:
 alter publication supabase_realtime add table public.invites;
 alter publication supabase_realtime add table public.games;
 alter publication supabase_realtime add table public.moves;
-alter publication supabase_realtime add table public.rematch_votes;
 ```
