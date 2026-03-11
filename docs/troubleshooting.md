@@ -1,4 +1,4 @@
-# Troubleshooting
+# 故障排查
 
 ## 1. 页面提示缺少环境变量
 
@@ -59,7 +59,7 @@
 
 修复状态：
 
-- 前端已加入 accepted game 一次性消费标记。
+- 前端已加入“已接受对局只消费一次”的标记。
 - Canvas 已使用静态层缓存，减少无效重绘。
 
 若仍出现：
@@ -94,7 +94,7 @@
 
 说明：
 
-- 这是 Cloudflare Pages 的 Preview 链接。
+- 这是 Cloudflare Pages 的预览链接。
 - 稳定生产地址应为 `https://<project>.pages.dev`。
 
 建议：

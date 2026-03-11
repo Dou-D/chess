@@ -1,28 +1,30 @@
-# Gameplay and UX Rules
+# 对局与交互规则
 
-## Match Start
+## 对局开始
 
-1. Both players set and save their own battle ID (`public_id`).
-2. Player A inputs Player B battle ID and sends invite.
-3. Player B accepts invite.
-4. A new `games` row is created and both clients sync into the same board.
+1. 双方玩家先设置并保存各自的对战 ID（`public_id`）。
+2. 玩家 A 输入玩家 B 的对战 ID 并发送邀请。
+3. 玩家 B 接受邀请。
+4. 系统创建新的 `games` 记录，双方客户端同步进入同一棋盘。
 
-## Turn Rules
+## 回合规则
 
-- 15x15 board
-- Black moves first
-- Only current turn player can place a stone
-- Win condition: 5 in a row (horizontal/vertical/diagonal)
-- Each turn has countdown; timeout triggers random legal move for current player
+- 棋盘大小为 15x15
+- 黑棋先手
+- 只有当前回合玩家可以落子
+- 点击合法空位后，会通过乐观更新立即显示棋子
+- 当一次落子正在提交时，棋盘会临时锁定，防止重复点击
+- 胜利条件为五子连线（横向、纵向、斜向均可）
+- 每回合都有倒计时；超时后会自动为当前玩家随机选择一个合法空位落子
 
-## Game Finish
+## 对局结束
 
-- Result overlay appears with: `Victory`, `Defeat`, or `Draw`.
-- Current game realtime connection is released after finish.
-- Opponent battle ID is retained in invite input for convenience.
-- New match requires manually sending a new invite.
+- 结束后会显示结果遮罩：`Victory`、`Defeat` 或 `Draw`
+- 当前对局的 Realtime 连接会在结束后释放
+- 邀请输入框会保留对手的对战 ID，方便再次发起邀请
+- 想开始新一局时，必须手动重新发送邀请
 
-## Session Behavior
+## 会话行为
 
-- On fresh page load, app does not auto-attach to old finished/playing games from previous sessions.
-- Only matches created/accepted in current session are auto-entered.
+- 页面全新打开后，应用不会自动附着到之前会话中的旧对局（无论已结束还是进行中）
+- 只有当前会话中新创建或新接受的对局，才会自动进入

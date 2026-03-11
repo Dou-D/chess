@@ -1,5 +1,6 @@
 -- Enable UUID generation helper.
 create extension if not exists pgcrypto;
+create extension if not exists pg_cron;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -350,6 +351,47 @@ $$;
 revoke all on function public.play_move(uuid, int, int) from public;
 grant execute on function public.play_move(uuid, int, int)
 to authenticated, service_role;
+
+create or replace function public.purge_app_data()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  truncate table
+    public.rematch_votes,
+    public.moves,
+    public.games,
+    public.invites,
+    public.profiles
+  restart identity cascade;
+end;
+$$;
+
+revoke all on function public.purge_app_data() from public;
+revoke all on function public.purge_app_data() from anon;
+revoke all on function public.purge_app_data() from authenticated;
+
+do $$
+declare
+  v_job_id bigint;
+begin
+  for v_job_id in
+    select jobid
+    from cron.job
+    where jobname = 'purge-gomoku-app-data-every-3-days'
+  loop
+    perform cron.unschedule(v_job_id);
+  end loop;
+
+  perform cron.schedule(
+    'purge-gomoku-app-data-every-3-days',
+    '0 3 */3 * *',
+    'select public.purge_app_data();'
+  );
+end;
+$$;
 
 -- rematch policies
 drop policy if exists "rematch_select_participants" on public.rematch_votes;

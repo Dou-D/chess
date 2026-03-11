@@ -1,6 +1,6 @@
-# Deployment
+# 部署说明
 
-## Build
+## 构建
 
 ```bash
 pnpm install
@@ -9,11 +9,11 @@ pnpm build
 
 ## GitHub Actions
 
-Workflow file:
+工作流文件：
 
 - `.github/workflows/deploy-pages.yml`
 
-Required GitHub repository secrets:
+GitHub 仓库中需要配置的 Secrets：
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
@@ -21,20 +21,20 @@ Required GitHub repository secrets:
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-## Cloudflare Requirement
+## Cloudflare 要求
 
-`CLOUDFLARE_PAGES_PROJECT_NAME` must match an existing Cloudflare **Pages** project name (not Workers project name).
+`CLOUDFLARE_PAGES_PROJECT_NAME` 必须与一个已存在的 Cloudflare **Pages** 项目名称完全一致，不能填写 Workers 项目名。
 
-## Domain Notes
+## 域名说明
 
-- `https://<project>.pages.dev` is the stable production domain.
-- `https://<hash>.<project>.pages.dev` is a preview deployment domain for a specific build.
-- If you changed secrets, re-run workflow to rebuild; Vite env is injected at build time.
+- `https://<project>.pages.dev` 是稳定的生产域名
+- `https://<hash>.<project>.pages.dev` 是某次构建对应的预览部署域名
+- 如果你修改了 Secrets，需要重新运行 workflow 重新构建；Vite 环境变量是在构建阶段注入的
 
-## Online "Missing env" Troubleshooting
+## 线上“缺少环境变量”的排查
 
-If page shows missing `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` online:
+如果线上页面提示缺少 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`，请按以下步骤排查：
 
-1. Verify secrets exist in GitHub repository Actions secrets.
-2. Re-run deployment workflow after updating secrets.
-3. Ensure you are opening production domain, not an old preview link.
+1. 确认 GitHub 仓库的 Actions Secrets 中已配置这些变量。
+2. 更新 Secrets 后重新运行部署 workflow。
+3. 确认你访问的是生产域名，而不是旧的预览链接。

@@ -1,4 +1,4 @@
-# Environment Checklist
+# 环境检查清单
 
 ## Supabase
 
@@ -10,7 +10,7 @@
   - `public.games`
   - `public.moves`
 
-## Local
+## 本地开发
 
 创建 `.env.local`：
 
@@ -25,11 +25,11 @@
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-## Deploy
+## 部署
 
 - 推送 `main` 分支或手动触发 workflow。
 
-## Cloudflare Pages URL
+## Cloudflare Pages 地址
 
 - 生产：`https://<project>.pages.dev`
 - 预览：`https://<hash>.<project>.pages.dev`
