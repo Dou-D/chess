@@ -19,6 +19,7 @@ function App() {
     activeGame,
     loading,
     busy,
+    placingStone,
     notice,
     errorMessage,
     myColor,
@@ -129,6 +130,7 @@ function App() {
           opponentId={opponentId}
           finishedResultTitle={finishedResultTitle}
           busy={busy}
+          placingStone={placingStone}
           isMyTurn={isMyTurn}
           turnCountdown={turnCountdown}
           syncMode={syncMode}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createBoard, hasFive, shortId } from "../lib/gomoku";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
@@ -16,6 +16,26 @@ type PlaceStoneOptions = {
   silent?: boolean;
 };
 
+type PlayMoveResponse = {
+  move: Move;
+  game: Game;
+};
+
+type PlaceStoneMutationVariables = {
+  game: Game;
+  moves: Move[];
+  x: number;
+  y: number;
+};
+
+type PlaceStoneMutationContext = {
+  previousMoves: Move[];
+  previousGame: Game | null;
+  movesKey: readonly ["moves", string];
+  gameKey: readonly ["activeGame", string, string];
+  optimisticMoveId: number;
+};
+
 const TURN_SECONDS = 15;
 const PUBLIC_ID_RULE = /^[a-zA-Z0-9_-]{4,24}$/;
 
@@ -25,6 +45,8 @@ const DEFAULT_REALTIME_STATE: RealtimeState = {
   games: false,
   moves: false,
 };
+const EMPTY_INVITES: Invite[] = [];
+const EMPTY_MOVES: Move[] = [];
 
 function getOpponent(game: Game, userId: string) {
   return game.black_player === userId ? game.white_player : game.black_player;
@@ -50,10 +72,12 @@ export function useGomokuGame() {
     null,
   );
   const [turnCountdown, setTurnCountdown] = useState(0);
+  const [placingStone, setPlacingStone] = useState(false);
 
   const turnAnchorRef = useRef<string | null>(null);
   const turnDeadlineRef = useRef<number | null>(null);
   const autoMoveLockRef = useRef<string | null>(null);
+  const placeStoneLockRef = useRef<string | null>(null);
   const prevActiveGameRef = useRef<Game | null>(null);
   const sessionStartRef = useRef<number>(Date.now());
   const consumedAcceptedGameIdsRef = useRef<Set<string>>(new Set());
@@ -314,9 +338,9 @@ export function useGomokuGame() {
     },
   });
 
-  const incomingInvites = incomingInvitesQuery.data ?? [];
-  const outgoingInvites = outgoingInvitesQuery.data ?? [];
-  const moves = movesQuery.data ?? [];
+  const incomingInvites = incomingInvitesQuery.data ?? EMPTY_INVITES;
+  const outgoingInvites = outgoingInvitesQuery.data ?? EMPTY_INVITES;
+  const moves = movesQuery.data ?? EMPTY_MOVES;
 
   const relatedIds = useMemo(() => {
     const set = new Set<string>();
@@ -442,6 +466,124 @@ export function useGomokuGame() {
     userId &&
     activeGame.current_turn === userId,
   );
+
+  const placeStoneMutation = useMutation<
+    PlayMoveResponse,
+    Error,
+    PlaceStoneMutationVariables,
+    PlaceStoneMutationContext
+  >({
+    mutationFn: async ({ game, x, y }) => {
+      const { data, error } = await supabase!.rpc("play_move", {
+        p_game_id: game.id,
+        p_x: x,
+        p_y: y,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const payload = data as PlayMoveResponse | null;
+      if (!payload?.move || !payload?.game) {
+        throw new Error("落子失败，服务端返回了空结果");
+      }
+
+      return payload;
+    },
+    onMutate: async (variables) => {
+      const movesKey = ["moves", variables.game.id] as const;
+      const gameKey = ["activeGame", userId!, variables.game.id] as const;
+
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: movesKey }),
+        queryClient.cancelQueries({ queryKey: gameKey }),
+      ]);
+
+      const previousMoves =
+        queryClient.getQueryData<Move[]>(movesKey) ?? variables.moves;
+      const previousGame =
+        queryClient.getQueryData<Game | null>(gameKey) ?? variables.game;
+      const optimisticMoveId = -Date.now();
+
+      const optimisticMove: Move = {
+        id: optimisticMoveId,
+        game_id: variables.game.id,
+        player_id: variables.game.current_turn,
+        x: variables.x,
+        y: variables.y,
+        move_index: previousMoves.length,
+        created_at: new Date().toISOString(),
+      };
+
+      const nextMoves = [...previousMoves, optimisticMove].sort(
+        (a, b) => a.move_index - b.move_index,
+      );
+
+      queryClient.setQueryData<Move[]>(movesKey, nextMoves);
+
+      const nextBoard = createBoard(nextMoves);
+      const winner = hasFive(
+        nextBoard,
+        variables.x,
+        variables.y,
+        variables.game.current_turn,
+      );
+      const draw = !winner && nextMoves.length === BOARD_SIZE * BOARD_SIZE;
+
+      if (!winner && !draw) {
+        const nextTurn = getOpponent(variables.game, variables.game.current_turn);
+        queryClient.setQueryData<Game | null>(gameKey, {
+          ...variables.game,
+          current_turn: nextTurn,
+        });
+      }
+
+      return {
+        previousMoves,
+        previousGame,
+        movesKey,
+        gameKey,
+        optimisticMoveId,
+      };
+    },
+    onError: (_error, _variables, context) => {
+      if (!context) {
+        return;
+      }
+
+      queryClient.setQueryData(context.movesKey, context.previousMoves);
+      queryClient.setQueryData(context.gameKey, context.previousGame);
+    },
+    onSuccess: (payload, variables, context) => {
+      const movesKey = context?.movesKey ?? (["moves", variables.game.id] as const);
+      const gameKey =
+        context?.gameKey ??
+        (["activeGame", userId!, variables.game.id] as const);
+
+      queryClient.setQueryData<Move[]>(movesKey, (current) => {
+        const base = (current ?? []).filter(
+          (item) => item.id !== context?.optimisticMoveId,
+        );
+        if (base.some((item) => item.id === payload.move.id)) {
+          return base.sort((a, b) => a.move_index - b.move_index);
+        }
+
+        return [...base, payload.move].sort(
+          (a, b) => a.move_index - b.move_index,
+        );
+      });
+      queryClient.setQueryData<Game | null>(gameKey, payload.game);
+    },
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: ["activeGame", userId, variables.game.id],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["moves", variables.game.id],
+      });
+    },
+  });
 
   useEffect(() => {
     if (currentGameId || !userId) {
@@ -823,18 +965,30 @@ export function useGomokuGame() {
         return;
       }
 
-      if (activeGame.status !== "playing") {
+      if (placeStoneLockRef.current === activeGame.id) {
         return;
       }
 
-      if (activeGame.current_turn !== userId) {
+      const gameKey = ["activeGame", userId, activeGame.id] as const;
+      const movesKey = ["moves", activeGame.id] as const;
+      const latestGame =
+        queryClient.getQueryData<Game | null>(gameKey) ?? activeGame;
+      const latestMoves =
+        queryClient.getQueryData<Move[]>(movesKey) ?? moves;
+      const latestBoard = createBoard(latestMoves);
+
+      if (latestGame.status !== "playing") {
+        return;
+      }
+
+      if (latestGame.current_turn !== userId) {
         if (!options?.silent) {
           setErrorMessage("还没轮到你落子");
         }
         return;
       }
 
-      if (board[y][x]) {
+      if (latestBoard[y][x]) {
         if (!options?.silent) {
           setErrorMessage("该位置已有棋子");
         }
@@ -842,76 +996,30 @@ export function useGomokuGame() {
       }
 
       setErrorMessage(null);
-      const moveIndex = moves.length;
+      placeStoneLockRef.current = activeGame.id;
+      setPlacingStone(true);
 
-      const { data: inserted, error: moveError } = await supabase
-        .from("moves")
-        .insert({
-          game_id: activeGame.id,
-          player_id: userId,
+      try {
+        await placeStoneMutation.mutateAsync({
+          game: latestGame,
+          moves: latestMoves,
           x,
           y,
-          move_index: moveIndex,
-        })
-        .select("*")
-        .single();
-
-      if (moveError || !inserted) {
+        });
+      } catch (error) {
         if (!options?.silent) {
-          setErrorMessage(`落子失败: ${moveError?.message ?? "未知错误"}`);
+          setErrorMessage(
+            error instanceof Error ? error.message : "落子失败，请稍后重试",
+          );
         }
-        return;
-      }
-
-      const nextMoves = [...moves, inserted as Move].sort(
-        (a, b) => a.move_index - b.move_index,
-      );
-
-      const nextBoard = createBoard(nextMoves);
-      const winner = hasFive(nextBoard, x, y, userId) ? userId : null;
-      const draw = !winner && nextMoves.length === BOARD_SIZE * BOARD_SIZE;
-
-      const nextTurn =
-        activeGame.black_player === userId
-          ? activeGame.white_player
-          : activeGame.black_player;
-
-      const updatePayload: Partial<Game> = winner
-        ? { status: "finished", winner: userId, current_turn: userId }
-        : draw
-          ? { status: "finished", winner: null, current_turn: userId }
-          : { current_turn: nextTurn };
-
-      const { error: gameError } = await supabase
-        .from("games")
-        .update(updatePayload)
-        .eq("id", activeGame.id);
-
-      if (gameError) {
-        if (!options?.silent) {
-          setErrorMessage(`更新对局状态失败: ${gameError.message}`);
+      } finally {
+        if (placeStoneLockRef.current === activeGame.id) {
+          placeStoneLockRef.current = null;
         }
-        return;
+        setPlacingStone(false);
       }
-
-      queryClient.setQueryData<Move[]>(["moves", activeGame.id], nextMoves);
-
-      if (updatePayload.status === "finished") {
-        const nextTarget = formatUserDisplay(getOpponent(activeGame, userId));
-        setTargetInviteId(nextTarget === "-" ? "" : nextTarget);
-        setFinishedResultTitle(winner ? "Victory" : draw ? "Draw" : null);
-        consumedAcceptedGameIdsRef.current.add(activeGame.id);
-        setCurrentGameId(null);
-        setNotice("本局已结束，已释放本局实时连接。若要继续请重新邀请。");
-        setTimeout(() => setNotice(null), 1800);
-      }
-
-      void queryClient.invalidateQueries({ queryKey: ["activeGame", userId] });
-      void queryClient.invalidateQueries({
-        queryKey: ["moves", activeGame.id],
-      });
     },
-    [activeGame, board, formatUserDisplay, moves, queryClient, userId],
+    [activeGame, moves, placeStoneMutation, queryClient, userId],
   );
 
   useEffect(() => {
@@ -992,6 +1100,7 @@ export function useGomokuGame() {
     activeGame,
     loading,
     busy,
+    placingStone,
     notice,
     errorMessage,
     myColor,

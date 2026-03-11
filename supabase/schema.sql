@@ -209,6 +209,148 @@ with check (
   )
 );
 
+create or replace function public.play_move(p_game_id uuid, p_x int, p_y int)
+returns jsonb
+language plpgsql
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_game public.games%rowtype;
+  v_move public.moves%rowtype;
+  v_move_index int;
+  v_next_turn uuid;
+  v_has_five boolean := false;
+  v_count int;
+  v_step int;
+  v_dx int;
+  v_dy int;
+begin
+  if v_user_id is null then
+    raise exception '用户未登录';
+  end if;
+
+  if p_x not between 0 and 14 or p_y not between 0 and 14 then
+    raise exception '坐标超出棋盘范围';
+  end if;
+
+  select *
+  into v_game
+  from public.games
+  where id = p_game_id
+    and (black_player = v_user_id or white_player = v_user_id)
+  for update;
+
+  if not found then
+    raise exception '对局不存在或你无权操作';
+  end if;
+
+  if v_game.status <> 'playing' then
+    raise exception '对局已结束';
+  end if;
+
+  if v_game.current_turn <> v_user_id then
+    raise exception '还没轮到你落子';
+  end if;
+
+  if exists (
+    select 1
+    from public.moves
+    where game_id = p_game_id
+      and x = p_x
+      and y = p_y
+  ) then
+    raise exception '该位置已有棋子';
+  end if;
+
+  select coalesce(max(move_index), -1) + 1
+  into v_move_index
+  from public.moves
+  where game_id = p_game_id;
+
+  insert into public.moves (game_id, player_id, x, y, move_index)
+  values (p_game_id, v_user_id, p_x, p_y, v_move_index)
+  returning *
+  into v_move;
+
+  for v_dx, v_dy in
+    select directions.dx, directions.dy
+    from (values (1, 0), (0, 1), (1, 1), (1, -1)) as directions(dx, dy)
+  loop
+    v_count := 1;
+    v_step := 1;
+
+    while exists (
+      select 1
+      from public.moves
+      where game_id = p_game_id
+        and player_id = v_user_id
+        and x = p_x + v_dx * v_step
+        and y = p_y + v_dy * v_step
+    ) loop
+      v_count := v_count + 1;
+      v_step := v_step + 1;
+    end loop;
+
+    v_step := 1;
+    while exists (
+      select 1
+      from public.moves
+      where game_id = p_game_id
+        and player_id = v_user_id
+        and x = p_x - v_dx * v_step
+        and y = p_y - v_dy * v_step
+    ) loop
+      v_count := v_count + 1;
+      v_step := v_step + 1;
+    end loop;
+
+    if v_count >= 5 then
+      v_has_five := true;
+      exit;
+    end if;
+  end loop;
+
+  if v_has_five then
+    update public.games
+    set status = 'finished',
+        winner = v_user_id,
+        current_turn = v_user_id
+    where id = p_game_id
+    returning *
+    into v_game;
+  elsif v_move_index + 1 = 225 then
+    update public.games
+    set status = 'finished',
+        winner = null,
+        current_turn = v_user_id
+    where id = p_game_id
+    returning *
+    into v_game;
+  else
+    v_next_turn := case
+      when v_game.black_player = v_user_id then v_game.white_player
+      else v_game.black_player
+    end;
+
+    update public.games
+    set current_turn = v_next_turn
+    where id = p_game_id
+    returning *
+    into v_game;
+  end if;
+
+  return jsonb_build_object(
+    'move', to_jsonb(v_move),
+    'game', to_jsonb(v_game)
+  );
+end;
+$$;
+
+revoke all on function public.play_move(uuid, int, int) from public;
+grant execute on function public.play_move(uuid, int, int)
+to authenticated, service_role;
+
 -- rematch policies
 drop policy if exists "rematch_select_participants" on public.rematch_votes;
 create policy "rematch_select_participants"

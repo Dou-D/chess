@@ -18,6 +18,7 @@ type BoardCardProps = {
   opponentId: string | null;
   finishedResultTitle: string | null;
   busy: boolean;
+  placingStone: boolean;
   isMyTurn: boolean;
   turnCountdown: number;
   syncMode: "websocket" | "fallback" | "disconnected";
@@ -32,6 +33,7 @@ export const BoardCard = memo(function BoardCard({
   opponentId,
   finishedResultTitle,
   busy,
+  placingStone,
   isMyTurn,
   turnCountdown,
   syncMode,
@@ -101,7 +103,13 @@ export const BoardCard = memo(function BoardCard({
           <GomokuCanvas
             board={board}
             blackPlayerId={activeGame?.black_player ?? null}
-            disabled={busy || !activeGame || activeGame.status !== "playing"}
+            disabled={
+              busy ||
+              placingStone ||
+              !isMyTurn ||
+              !activeGame ||
+              activeGame.status !== "playing"
+            }
             onPlaceStone={(x, y) => {
               void onPlaceStone(x, y);
             }}
